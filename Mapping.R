@@ -13,6 +13,7 @@
 
 ## 1.)  MAPPING - HOUSING DENSITY IN PORTLAND, OR ####
 
+library(here)
 library(dplyr)
 library(readtext)
 library(ggmap)
@@ -22,10 +23,6 @@ library(RColorBrewer)
 
 options(scipen=999)
 
-setwd("C:/Users/hj163e/Documents/My Folder/Personal/GitHub Projects/Geocoding and Mapping")
-getwd()
-
-
 ### Get Data ####
 
 #### download .zip file and store in working directory
@@ -33,12 +30,12 @@ dataUrl <- "https://s3.amazonaws.com/data.openaddresses.io/openaddr-collected-us
 download.file(dataUrl, "uswest.zip")
 
 #### unzip the contents of .zip folder and store in working directory
-zipFilePath <- paste0(getwd(),"/uswest.zip")
+zipFilePath <- here("uswest.zip")
 unzip(zipFilePath)
 
 #### get list of states (also the name of individual folders within "uswest.zip/us" )
-stateList <- list.files(path=paste0(getwd(),"/us"))
-stateList <- stateList[c(10,12)] # limit to just OR
+stateList <- list.files(path=here("us"))
+stateList <- stateList[c(10,12)] # limit to just OR & WA
 
 #### initialize data frame for all address info
 allData <- data.frame()
@@ -46,46 +43,44 @@ allData <- data.frame()
 #### loop through all folders and retrieve the data for each city/state
 for (i in 1:length(stateList)) {
   # get file path for the state
-  filePath <- sprintf(paste0(getwd(),"/us/%s"), stateList[i])
+  filePath <- sprintf(here("us","%s"), stateList[i])
   # get the names of all files for the state
   allStateFiles <- list.files(filePath)
   # get index for .csv files for the state 
   allStateFilesCSVIndex <- regexpr(".csv", allStateFiles, useBytes=FALSE)
   # get names of all .csv files for the state 
   allStateCSV <- allStateFiles[allStateFilesCSVIndex != -1]
-    for (i2 in 1:length(allStateCSV)) {
-      # only try to read .csv files that are > 100 bytes
-      if(file.size(paste0(filePath,"/",allStateCSV[i2])) > 100) {
-        # retrieve the data from .csv file  
-        cityData <- read.csv(sprintf(paste0(getwd(), "/us/%s/", allStateCSV[i2]), stateList[i]), stringsAsFactors = FALSE)
-        # add city and state abbreviation to data frame
-        cityData$CITY <- allStateCSV[i2]
-        cityData$ST <- stateList[i]
-        # concatenate data for city into larger list of data for all cities
-        allData <- rbind(allData,cityData)
-      }
-   }
+  for (i2 in 1:length(allStateCSV)) {
+    # only try to read .csv files that are > 100 bytes
+    if(file.size(paste0(filePath,"/",allStateCSV[i2])) > 100) {
+      # retrieve the data from .csv file  
+      cityData <- read.csv(sprintf(here("us","%s",allStateCSV[i2]), stateList[i]), stringsAsFactors = FALSE)
+      # add city and state abbreviation to data frame
+      cityData$FILE <- allStateCSV[i2]
+      cityData$FOLDER <- stateList[i]
+      # concatenate data for city into larger list of data for all cities
+      allData <- rbind(allData,cityData)
+    }
+  }
 }
 
 #### check to ensure we got records from all states
-table(allData$ST)
+table(allData$FOLDER)
 
 ### Clean Data #### 
-#### keep only: Long, Lat, Number, Street, Unit, State (Not City, comes from file folder name, not accurate)
-allData_clean <- allData[ ,c(1,2,3,4,5,12)]
+#### keep only: Long, Lat, Number, Street, Unit, State (Not City - inaccurate)
+allData_clean <- allData[ ,c(1,2,3,4,5,13)]
 #### capitalize state abbreviation
-allData_clean$ST <- toupper(allData_clean$ST)
+allData_clean$FOLDER <- toupper(allData_clean$FOLDER)
 #### concatenate address fields 
-allData_clean <- mutate(allData_clean,Complete_Address = 
-                          paste(NUMBER, STREET, UNIT, ST, sep=" "))
+allData_clean <- mutate(allData_clean,COMPLETE_ADDRESS = 
+                          paste(NUMBER, STREET, UNIT, FOLDER, sep=" "))
 
 head(allData_clean)
 
 #### keep only distinct long, lat and complete address combinations
 allData_clean <- allData_clean[ ,c(1,2,7)]
 allData_clean_unq <- distinct(allData_clean)
-
-head(allData_clean_unq)
 
 #### keep just the long and lat for mapping
 or_lonlat_uniq <- allData_clean_unq[ ,1:2]
@@ -94,18 +89,15 @@ head(or_lonlat_uniq)
 
 ### Generate Map ####
 #### get base map
-PDX <- get_map(location = "Portland, OR", zoom = 11, maptype = "roadmap")
-ggmap(tst) 
-
-library(ggmap)
-tst <- get_map()
+PDX <- get_map(location = "Portland, OR", zoom = 12, maptype = "roadmap")
+ggmap(PDX) 
 
 #### filter long and lat data to those +/- .2 degrees of lat/long map limits
 lower_limits <- attr(PDX, "bb")-.2
 upper_limits <- attr(PDX, "bb")+.2
 
 pdx_lonlat_uniq <- filter(or_lonlat_uniq, LON <= upper_limits$ur.lon & LON >= lower_limits$ll.lon
-                                        & LAT <= upper_limits$ur.lat & LAT >= lower_limits$ll.lat)
+                          & LAT <= upper_limits$ur.lat & LAT >= lower_limits$ll.lat)
 
 ####  plot density map (edges of map alter the density plot)
 ggmap(PDX, extent = "panel", maprange = FALSE) + 
@@ -128,8 +120,8 @@ ggmap(PDX, extent = "normal", maprange = FALSE) %+%
   scale_fill_gradient(low = "green3", high = "red2") +
   scale_alpha(range = c(0.1, 0.25)) +
   coord_map(projection="mercator", # cuts the edges off and only display the map portion
-              xlim=c(attr(PDX, "bb")$ll.lon, attr(PDX, "bb")$ur.lon),
-              ylim=c(attr(PDX, "bb")$ll.lat, attr(PDX, "bb")$ur.lat)) +
+            xlim=c(attr(PDX, "bb")$ll.lon, attr(PDX, "bb")$ur.lon),
+            ylim=c(attr(PDX, "bb")$ll.lat, attr(PDX, "bb")$ur.lat)) +
   labs(title = "Housing Density\nPortland, OR", subtitle=("(non-distorted)")) +
   theme(legend.position = "none", 
         axis.title = element_blank(),
@@ -184,15 +176,15 @@ allData <- mutate(allData, CompleteAddress = paste0(Address, ", SEATTLE, WA ", Z
 
 
 ### Geocode Data ####
-GeocodedAddressesFinal <- geocode(tst$CompleteAddress, output = "latlona")
+GeocodedAddressesFinal <- geocode(allData$CompleteAddress, output = "latlona")
 
 #### If the above does return all values, use the defined functions
 #### instead to throttle the requests to the Google API
-GeocodedAddresses <- lapply(tst[,12], geocode_wait)
+GeocodedAddresses <- lapply(allData$CompleteAddress, geocode_wait)
 #### convert geocode list to tidy dataframe 
 Geocodes <- clean_geocode(GeocodedAddresses)
 #### concatenate geocodes back with all data
-GeocodedAddressesFinal <- cbind(Geocodes, tst)
+GeocodedAddressesFinal <- cbind(Geocodes, allData)
 
 head(GeocodedAddressesFinal)
 
@@ -209,4 +201,3 @@ myPalette <- colorRampPalette(brewer.pal(7, "Set1"))
 ggmap(SEA, extent = "panel", maprange = FALSE) + 
   geom_point(data = GeocodedAddressesFinal, mapping = aes(x = lon, y = lat, size = UnitsWithLimits, color = CouncilDistrict), alpha=0.75) +
   scale_colour_gradientn(colours = myPalette(100), limits=c(1, 7))
-
